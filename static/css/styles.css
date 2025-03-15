@@ -14,6 +14,7 @@
     --sma50-color: #e5ae38;
     --sma200-color: #e15759;
     --rsi-color: #a379c9;
+    --info-color: #0dcaf0;
 }
 
 /* Base styles */
@@ -71,6 +72,54 @@ body.dark-theme {
     border-color: var(--primary-color);
 }
 
+.form-text {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+/* File upload styling */
+input[type="file"].form-control {
+    padding: 0.375rem;
+}
+
+input[type="file"].form-control::file-selector-button {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 0.375rem 0.75rem;
+    margin-right: 0.75rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.15s ease-in-out;
+}
+
+input[type="file"].form-control::file-selector-button:hover {
+    background-color: var(--primary-hover);
+}
+
+/* Alert styling */
+.alert {
+    background-color: #1a1a1a;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+}
+
+.alert-info {
+    background-color: rgba(13, 202, 240, 0.1);
+    border-color: rgba(13, 202, 240, 0.2);
+    color: var(--info-color);
+}
+
+.btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* Data source toggle */
+.data-source-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+}
+
 /* Button styling */
 .btn-primary {
     background-color: var(--primary-color);
@@ -80,6 +129,27 @@ body.dark-theme {
 .btn-primary:hover, .btn-primary:focus, .btn-primary:active {
     background-color: var(--primary-hover) !important;
     border-color: var(--primary-hover) !important;
+}
+
+.btn-outline-primary {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.btn-outline-primary:hover, .btn-outline-primary:focus {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+}
+
+.btn-secondary {
+    background-color: #555555;
+    border-color: #555555;
+}
+
+.btn-secondary:hover, .btn-secondary:focus {
+    background-color: #444444 !important;
+    border-color: #444444 !important;
 }
 
 /* Nav tabs */
@@ -232,9 +302,38 @@ body.dark-theme {
     background: var(--primary-color);
 }
 
+/* Modal styling */
+.modal-content {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+}
+
+.modal-header {
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--card-header-bg);
+}
+
+.modal-footer {
+    border-top: 1px solid var(--border-color);
+}
+
+.csv-example {
+    background-color: #1a1a1a;
+    padding: 1rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    color: #aaaaaa;
+    overflow-x: auto;
+}
+
 /* Responsive tweaks */
 @media (max-width: 992px) {
     .chart-container {
         height: 400px;
+    }
+    
+    .data-source-toggle {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }
