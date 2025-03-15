@@ -771,7 +771,7 @@ def create_plotly_chart(title, interval, data, zones, show_settings):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('../templates/index.html')
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
