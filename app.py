@@ -1,5 +1,5 @@
 # app.py - Main Flask application
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -8,8 +8,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import traceback
+import os
+import uuid
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key_here')
+
+# Create upload directory if it doesn't exist
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 # Helper functions for technical analysis
 def calculate_true_range(data):
@@ -43,6 +51,17 @@ def fetch_stock_data(ticker, interval='5m', period='60d'):
     if data.empty:
         raise ValueError(f"No data available for {ticker} at {interval} interval")
     
+    # Apply common processing
+    return process_data(data)
+
+def process_data(data):
+    """Process dataframe and calculate technical indicators"""
+    # Ensure required columns exist
+    required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+    for col in required_columns:
+        if col not in data.columns:
+            raise ValueError(f"Required column '{col}' not found in data")
+    
     # Calculate additional metrics for better zone identification
     data['HL_Range'] = data['High'] - data['Low']
     data['Body_Range'] = abs(data['Open'] - data['Close'])
@@ -72,6 +91,79 @@ def fetch_stock_data(ticker, interval='5m', period='60d'):
     data['VolumePctChange'] = data['Volume'].pct_change()
     
     return data
+
+def process_csv_data(file_path):
+    """Process uploaded CSV file into the required format"""
+    try:
+        # Read the CSV file
+        df = pd.read_csv(file_path)
+        
+        # Check if we have a datetime column
+        date_col = None
+        for col in df.columns:
+            if col.lower() in ['date', 'datetime', 'time', 'timestamp']:
+                date_col = col
+                break
+        
+        if date_col:
+            # Convert to datetime and set as index
+            df[date_col] = pd.to_datetime(df[date_col])
+            df = df.set_index(date_col)
+        else:
+            # If no date column, create a simple index
+            df.index = pd.date_range(start='2023-01-01', periods=len(df), freq='D')
+        
+        # Map common column names to our required format
+        column_mapping = {}
+        for col in df.columns:
+            col_lower = col.lower()
+            if 'open' in col_lower:
+                column_mapping[col] = 'Open'
+            elif 'high' in col_lower:
+                column_mapping[col] = 'High'
+            elif 'low' in col_lower:
+                column_mapping[col] = 'Low'
+            elif 'close' in col_lower or 'last' in col_lower or 'price' in col_lower:
+                column_mapping[col] = 'Close'
+            elif 'volume' in col_lower or 'vol' in col_lower:
+                column_mapping[col] = 'Volume'
+        
+        # Check if we have all required columns
+        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        missing_cols = [col for col in required_cols if col not in column_mapping.values()]
+        
+        if missing_cols:
+            # For missing columns, try to derive them from existing data
+            for col in missing_cols:
+                if col == 'Open' and 'Close' in column_mapping.values():
+                    close_col = [c for c, v in column_mapping.items() if v == 'Close'][0]
+                    df['Open'] = df[close_col].shift(1)
+                    column_mapping['Open'] = 'Open'
+                elif col == 'High' and 'Close' in column_mapping.values():
+                    close_col = [c for c, v in column_mapping.items() if v == 'Close'][0]
+                    df['High'] = df[close_col] * 1.005  # Approximate
+                    column_mapping['High'] = 'High'
+                elif col == 'Low' and 'Close' in column_mapping.values():
+                    close_col = [c for c, v in column_mapping.items() if v == 'Close'][0]
+                    df['Low'] = df[close_col] * 0.995  # Approximate
+                    column_mapping['Low'] = 'Low'
+                elif col == 'Volume':
+                    df['Volume'] = 1000000  # Default placeholder
+                    column_mapping['Volume'] = 'Volume'
+        
+        # Rename columns according to mapping
+        df = df.rename(columns=column_mapping)
+        
+        # Keep only the columns we need plus any extras
+        columns_to_keep = list(set(column_mapping.values()))
+        df = df[columns_to_keep]
+        
+        # Process the data
+        processed_data = process_data(df)
+        return processed_data
+    
+    except Exception as e:
+        raise ValueError(f"Error processing CSV file: {str(e)}")
 
 def identify_zones(data, threshold=0.02, lookback=10, breakout_window=5, require_volume=True):
     """
@@ -388,7 +480,7 @@ def merge_zones(zones):
     
     return merged
 
-def create_plotly_chart(ticker, interval, data, zones, show_settings):
+def create_plotly_chart(title, interval, data, zones, show_settings):
     """Create an interactive Plotly chart with zones and indicators"""
     
     # Get display settings
@@ -612,7 +704,7 @@ def create_plotly_chart(ticker, interval, data, zones, show_settings):
     
     # Update layout
     fig.update_layout(
-        title=f'{ticker} - {interval} Timeframe',
+        title=f'{title} - {interval if interval else "Custom"} Timeframe',
         paper_bgcolor='#232323',
         plot_bgcolor='#1a1a1a',
         font=dict(color='#9e9e9e'),
@@ -689,6 +781,9 @@ def analyze():
         require_volume = data.get('require_volume', True)
         merge_zones_enabled = data.get('merge_zones', True)
         
+        # Check if we should use uploaded data
+        use_uploaded_data = data.get('use_uploaded_data', False)
+        
         # Get display settings
         show_settings = {
             'show_sma20': data.get('show_sma20', True),
@@ -702,23 +797,40 @@ def analyze():
             'rsi_period': data.get('rsi_period', 14)
         }
         
-        # Validate inputs
-        if not ticker:
-            return jsonify({'error': 'Ticker symbol is required'}), 400
+        # Validate inputs for API data
+        if not use_uploaded_data and not ticker:
+            return jsonify({'error': 'Ticker symbol is required for API data'}), 400
         
-        # Fetch stock data
-        data = fetch_stock_data(ticker, interval, period)
+        # Get the data for analysis
+        if use_uploaded_data:
+            # Check if we have an active upload file
+            upload_id = session.get('upload_id')
+            if not upload_id:
+                return jsonify({'error': 'No uploaded file found. Please upload a CSV file first.'}), 400
+                
+            # Get the file path
+            file_path = os.path.join(UPLOAD_FOLDER, f"{upload_id}.csv")
+            if not os.path.exists(file_path):
+                return jsonify({'error': 'Uploaded file not found. Please upload again.'}), 400
+            
+            # Process the file
+            ticker_data = process_csv_data(file_path)
+            title = session.get('upload_filename', 'Uploaded Data')
+        else:
+            # Fetch stock data from API
+            ticker_data = fetch_stock_data(ticker, interval, period)
+            title = ticker
         
         # Identify zones based on detection method
         if detection_method == "Consolidation":
-            zones = identify_zones(data, threshold, consolidation_window, 5, require_volume)
+            zones = identify_zones(ticker_data, threshold, consolidation_window, 5, require_volume)
             zones = [(d, t, info) for d, t, info in zones if info.get('consolidation', False)]
             
         elif detection_method == "Price Action":
-            zones = identify_price_action_zones(data, threshold, consolidation_window // 2, require_volume)
+            zones = identify_price_action_zones(ticker_data, threshold, consolidation_window // 2, require_volume)
             
         else:  # "Both"
-            zones = identify_zones(data, threshold, consolidation_window, 5, require_volume)
+            zones = identify_zones(ticker_data, threshold, consolidation_window, 5, require_volume)
         
         # Merge zones if requested
         if merge_zones_enabled and zones:
@@ -734,18 +846,76 @@ def analyze():
         zones.sort(key=lambda x: x[2]['strength'], reverse=True)
         
         # Create chart
-        fig = create_plotly_chart(ticker, interval, data, zones, show_settings)
+        fig = create_plotly_chart(title, interval if not use_uploaded_data else 'Custom', ticker_data, zones, show_settings)
         
         # Return results
         return jsonify({
-            'ticker': ticker,
-            'interval': interval,
+            'title': title,
+            'interval': interval if not use_uploaded_data else 'Custom',
             'zones': zones,
-            'chart': fig.to_json()
+            'chart': fig.to_json(),
+            'data_source': 'upload' if use_uploaded_data else 'api'
         })
         
     except Exception as e:
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """Handle file uploads"""
+    try:
+        if 'csvFile' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+            
+        file = request.files['csvFile']
+        
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+            
+        if file and '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() == 'csv':
+            # Generate a unique ID for this upload
+            upload_id = str(uuid.uuid4())
+            
+            # Save the file
+            file_path = os.path.join(UPLOAD_FOLDER, f"{upload_id}.csv")
+            file.save(file_path)
+            
+            # Store the upload ID in session
+            session['upload_id'] = upload_id
+            session['upload_filename'] = file.filename
+            
+            return jsonify({
+                'success': True,
+                'message': f'File {file.filename} uploaded successfully',
+                'filename': file.filename
+            })
+        else:
+            return jsonify({'error': 'File must be a CSV'}), 400
+    
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/clear-upload', methods=['POST'])
+def clear_upload():
+    """Clear the current upload"""
+    try:
+        # Check if we have an active upload
+        upload_id = session.get('upload_id')
+        if upload_id:
+            # Remove the file
+            file_path = os.path.join(UPLOAD_FOLDER, f"{upload_id}.csv")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            
+            # Clear session
+            session.pop('upload_id', None)
+            session.pop('upload_filename', None)
+        
+        return jsonify({'success': True})
+    
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/intervals')
