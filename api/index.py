@@ -11,7 +11,7 @@ import traceback
 import os
 import uuid
 import tempfile
-from api.index import app
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key_here')
