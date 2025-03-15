@@ -11,15 +11,106 @@ document.addEventListener('DOMContentLoaded', function() {
     const thresholdSlider = document.getElementById('thresholdSlider');
     const thresholdValue = document.getElementById('thresholdValue');
     
+    // Data Source Toggle Elements
+    const apiDataSource = document.getElementById('apiDataSource');
+    const fileDataSource = document.getElementById('fileDataSource');
+    const apiSettingsCard = document.getElementById('apiSettingsCard');
+    const fileUploadCard = document.getElementById('fileUploadCard');
+    
+    // File Upload Elements
+    const uploadForm = document.getElementById('uploadForm');
+    const currentFileInfo = document.getElementById('currentFileInfo');
+    const currentFileName = document.getElementById('currentFileName');
+    const clearFileBtn = document.getElementById('clearFileBtn');
+    const analyzeFileBtn = document.getElementById('analyzeFileBtn');
+    
     // Update threshold value display
     thresholdSlider.addEventListener('input', function() {
         thresholdValue.textContent = `${this.value}%`;
     });
     
-    // Form submission
+    // Toggle between API and File upload settings
+    apiDataSource.addEventListener('change', function() {
+        apiSettingsCard.classList.remove('d-none');
+        fileUploadCard.classList.add('d-none');
+    });
+
+    fileDataSource.addEventListener('change', function() {
+        apiSettingsCard.classList.add('d-none');
+        fileUploadCard.classList.remove('d-none');
+    });
+    
+    // API Form submission
     analysisForm.addEventListener('submit', function(e) {
         e.preventDefault();
         analyzeStock();
+    });
+    
+    // Handle CSV file upload
+    uploadForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const fileInput = document.getElementById('csvFile');
+        if (!fileInput.files.length) {
+            updateStatus('Please select a CSV file', 'danger');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('csvFile', fileInput.files[0]);
+        
+        // Show loading overlay
+        loadingOverlay.classList.remove('d-none');
+        updateStatus('Uploading file...', 'info');
+        
+        fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Show file info and analyze button
+                uploadForm.classList.add('d-none');
+                currentFileInfo.classList.remove('d-none');
+                currentFileName.textContent = data.filename;
+                updateStatus('File uploaded. Click Analyze to process it.', 'success');
+            } else {
+                throw new Error(data.error || 'Failed to upload file');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus(`Error: ${error.message}`, 'danger');
+        })
+        .finally(() => {
+            loadingOverlay.classList.add('d-none');
+        });
+    });
+    
+    // Clear uploaded file
+    clearFileBtn.addEventListener('click', function() {
+        fetch('/api/clear-upload', {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                uploadForm.classList.remove('d-none');
+                currentFileInfo.classList.add('d-none');
+                document.getElementById('csvFile').value = '';
+                updateStatus('Upload cleared', 'info');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            updateStatus(`Error: ${error.message}`, 'danger');
+        });
+    });
+    
+    // Analyze uploaded file
+    analyzeFileBtn.addEventListener('click', function() {
+        analyzeUploadedFile();
     });
     
     async function analyzeStock() {
@@ -64,7 +155,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     show_demand: settings.showDemand,
                     zone_display: settings.zoneDisplay,
                     max_bars: settings.maxBars,
-                    rsi_period: settings.rsiPeriod
+                    rsi_period: settings.rsiPeriod,
+                    use_uploaded_data: false // Using API data
                 })
             });
             
@@ -81,6 +173,69 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateStatus('Analysis complete', 'success');
             } else {
                 throw new Error(data.error || 'Failed to analyze stock');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            chartContainer.innerHTML = `
+                <div class="placeholder-container">
+                    <i class="bi bi-exclamation-triangle placeholder-icon"></i>
+                    <p>Error: ${error.message}</p>
+                </div>
+            `;
+            updateStatus(`Error: ${error.message}`, 'danger');
+        } finally {
+            // Hide loading overlay
+            loadingOverlay.classList.add('d-none');
+        }
+    }
+    
+    async function analyzeUploadedFile() {
+        // Get settings
+        const settings = getSettings();
+        
+        // Show loading overlay
+        loadingOverlay.classList.remove('d-none');
+        updateStatus('Analyzing uploaded data...', 'info');
+        
+        try {
+            // Send API request with a flag to use uploaded data
+            const response = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    use_uploaded_data: true, // Using uploaded data
+                    threshold: settings.threshold / 100,
+                    consol_window: settings.consolWindow,
+                    detection_method: settings.detectionMethod,
+                    require_volume: settings.requireVolume,
+                    merge_zones: settings.mergeZones,
+                    show_sma20: settings.showSMA20,
+                    show_sma50: settings.showSMA50,
+                    show_sma200: settings.showSMA200,
+                    show_rsi: settings.showRSI,
+                    show_supply: settings.showSupply,
+                    show_demand: settings.showDemand,
+                    zone_display: settings.zoneDisplay,
+                    max_bars: settings.maxBars,
+                    rsi_period: settings.rsiPeriod
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                // Update the chart
+                chartTitle.textContent = `${data.title} - ${data.interval} Timeframe`;
+                updateChart(data.chart);
+                
+                // Update zones table
+                updateZonesTable(data.zones);
+                
+                updateStatus('Analysis complete', 'success');
+            } else {
+                throw new Error(data.error || 'Failed to analyze data');
             }
         } catch (error) {
             console.error('Error:', error);
